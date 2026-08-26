@@ -126,6 +126,7 @@ import {
   polygonCentroid,
   areaZoomTransform,
   IDENTITY_ZOOM,
+  applyManualZoom,
   floorContentBounds,
   FIT_FLOOR_PAD,
   FIT_FLOOR_MAX_SCALE,
@@ -3640,6 +3641,44 @@ const emptyFloor = (): Floor =>
     trackers: [],
     areas: [],
   }) as unknown as Floor;
+
+describe("applyManualZoom (Marco's fork, card zoom controls)", () => {
+  it("returns the zoom unchanged at multiplier 1", () => {
+    const zoom = { scale: 2, txPercent: -30, tyPercent: 10 };
+    expect(applyManualZoom(zoom, 1)).toEqual(zoom);
+  });
+
+  it("multiplies the identity zoom's scale directly, with no pan shift", () => {
+    // Identity has txPercent/tyPercent 0, so 50 - m*(50-0) = 50 - 50m; at
+    // m=2 that's -50, i.e. the plan's own center (50%) shifts to keep the
+    // canvas center in view at 2x -- correct, not "no shift", but simple to
+    // hand-check against the formula directly.
+    const t = applyManualZoom(IDENTITY_ZOOM, 2);
+    expect(t.scale).toBe(2);
+    expect(t.txPercent).toBe(50 - 2 * 50);
+    expect(t.tyPercent).toBe(50 - 2 * 50);
+  });
+
+  it("re-centers on the same point a prior zoom already centered on", () => {
+    // A zoom already centered (txPercent/tyPercent land back on 50 at its own
+    // scale, same as the areaZoomTransform "centered room" test) stays
+    // centered after an additional manual multiplier -- 50 - m*(50-50) = 50.
+    const centered = { scale: 4, txPercent: 50, tyPercent: 50 };
+    const t = applyManualZoom(centered, 1.5);
+    expect(t.scale).toBe(6);
+    expect(t.txPercent).toBe(50);
+    expect(t.tyPercent).toBe(50);
+  });
+
+  it("does not clamp to the plan's edges the way areaZoomTransform's own scale does", () => {
+    // A pan already at the clamped edge (0) moves *past* 0 under extra manual
+    // zoom, on purpose -- see the function's own doc comment.
+    const edge = { scale: 4, txPercent: 0, tyPercent: 0 };
+    const t = applyManualZoom(edge, 2);
+    expect(t.txPercent).toBe(50 - 2 * 50);
+    expect(t.tyPercent).toBe(50 - 2 * 50);
+  });
+});
 
 describe("floorContentBounds (Marco's fork, fitFloor)", () => {
   it("returns null for a floor with nothing on it", () => {
