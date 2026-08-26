@@ -3910,6 +3910,33 @@ export function polygonCentroid(points: readonly AreaPoint[]): { x: number; y: n
 export const IDENTITY_ZOOM: AreaZoomTransform = { scale: 1, txPercent: 0, tyPercent: 0 };
 
 /**
+ * Layer a manual zoom multiplier on top of whatever frame the plan is
+ * already showing — identity, `fitFloor`'s fit, or a tapped room (Marco's
+ * fork, card-level zoom controls). `multiplier` `1` returns `zoom` unchanged.
+ *
+ * Re-derives the pan so the *same point* stays centered after the extra
+ * zoom, rather than re-centering on the canvas origin: `zoom.txPercent` was
+ * `50 - zoom.scale * cxFrac * 100` for whatever center `areaZoomTransform`
+ * picked, so `cxFrac * 100 = (50 - zoom.txPercent) / zoom.scale`, and at the
+ * new scale that same fraction gives the new percent. Simplifies to
+ * `50 - multiplier * (50 - zoom.txPercent)`, which needs neither the
+ * original points nor the original scale.
+ *
+ * Deliberately doesn't re-clamp to the plan's edges the way
+ * {@link areaZoomTransform} does for its own scale — this is a user turning
+ * a dial, not an automatic frame, so panning to the edge and a little past
+ * is normal use rather than a bug to guard against.
+ */
+export function applyManualZoom(zoom: AreaZoomTransform, multiplier: number): AreaZoomTransform {
+  if (multiplier === 1) return zoom;
+  return {
+    scale: zoom.scale * multiplier,
+    txPercent: 50 - multiplier * (50 - zoom.txPercent),
+    tyPercent: 50 - multiplier * (50 - zoom.tyPercent),
+  };
+}
+
+/**
  * {@link areaZoomTransform} tuning for `fitFloor` (Marco's fork): a looser
  * pad than the 0.15 default room-zoom uses, since a whole floor's silhouette
  * is more irregular than one room's box and wants a little more breathing

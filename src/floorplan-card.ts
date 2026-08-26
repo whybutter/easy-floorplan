@@ -112,6 +112,7 @@ import {
   planRotationTransform,
   areaZoomTransform,
   IDENTITY_ZOOM,
+  applyManualZoom,
   floorContentBounds,
   resolvePlanRotation,
   FIT_FLOOR_PAD,
@@ -161,6 +162,15 @@ export class FloorplanCard extends LitElement {
   @state() private _activeFloorId?: string;
   /** View-state: which area (if any) the plan is zoomed in to. Never persisted. */
   @state() private _zoomedAreaId?: string;
+  /**
+   * Manual zoom multiplier on top of whatever the plan is already framed to
+   * (identity, `fitFloor`, or a tapped room) — Marco's fork. `1` means no
+   * extra zoom. Reset to `1` on floor switch and room tap/untap, same as
+   * `_zoomedAreaId`, so each new frame starts from its own natural baseline
+   * rather than carrying over a zoom level that made sense for a different
+   * view. Never persisted.
+   */
+  @state() private _manualZoom = 1;
   /**
    * The *viewport's* own orientation (Marco's fork) — window width vs height,
    * not this card's own box, since a card's width is usually dictated by a
@@ -524,11 +534,25 @@ export class FloorplanCard extends LitElement {
     this._activeFloorId = id;
     lastViewedFloor.set(floorMemoryKey(floors), id);
     this._zoomedAreaId = undefined;
+    this._manualZoom = 1;
   }
 
   /** Tapping a room zooms the plan in to it; tapping the same room again zooms back out. */
   private _onAreaClick(a: Area): void {
     this._zoomedAreaId = this._zoomedAreaId === a.id ? undefined : a.id;
+    this._manualZoom = 1;
+  }
+
+  /** Zoom control buttons (Marco's fork) — same 0.5x-4x range as the editor's. */
+  private _setManualZoom(z: number): void {
+    this._manualZoom = Math.min(4, Math.max(0.5, Math.round(z * 20) / 20));
+  }
+
+  /** Ctrl/Cmd + wheel zooms the live card too, same convention as the editor. */
+  private _onPlanWheel(ev: WheelEvent): void {
+    if (!ev.ctrlKey && !ev.metaKey) return;
+    ev.preventDefault();
+    this._setManualZoom(this._manualZoom - Math.sign(ev.deltaY) * 0.1);
   }
 
   /**
@@ -858,11 +882,16 @@ export class FloorplanCard extends LitElement {
     // showing the full canvas — both are "reframe to something smaller than
     // the whole plan", so an explicit one takes priority over an implicit one.
     const floorBounds = !zoomedArea && c.fitFloor ? floorContentBounds(active) : null;
-    const zoom = zoomedArea
+    const baseZoom = zoomedArea
       ? areaZoomTransform(zoomedArea.points, c.width, c.height, rot)
       : floorBounds
         ? areaZoomTransform(floorBounds, c.width, c.height, rot, FIT_FLOOR_PAD, FIT_FLOOR_MAX_SCALE)
         : IDENTITY_ZOOM;
+    // Manual zoom controls (Marco's fork): a dial on top of whatever frame is
+    // already showing, not a replacement for it — zooming further into an
+    // already-fitted floor, or out of a tapped room, still starts from that
+    // frame rather than the raw canvas.
+    const zoom = applyManualZoom(baseZoom, this._manualZoom);
     // Chrome drawn inside the plan rather than above it (issue #152). The
     // flag is what the floor buttons follow; the chip needs a title as well,
     // and a compact card with no title has nothing to draw there.
@@ -903,6 +932,7 @@ export class FloorplanCard extends LitElement {
                    width: min(100%, calc(100cqh * ${dims.w} / ${dims.h}));
                    --fp-plan-w: ${dims.w};
                    background:${cssColorOr(c.background, SKIN_PAPER)};"
+            @wheel=${this._onPlanWheel}
           >
           <!-- preserveAspectRatio="none" is correct here, and it took a wrong
                fix to see why. Fitting the plan into a card that is the wrong
@@ -1244,16 +1274,39 @@ export class FloorplanCard extends LitElement {
             )}
           </div>
           </div>
-          ${zoom.scale > 1
-            ? html`<button
-                class="zoom-out"
-                title="Zoom out"
-                aria-label="Zoom out"
-                @click=${() => (this._zoomedAreaId = undefined)}
-              >
-                <ha-icon icon="mdi:magnify-minus-outline"></ha-icon>
-              </button>`
-            : nothing}
+          ${
+            // Resets whatever the *user* zoomed (a tapped room, the manual
+            // dial) — not fitFloor's own automatic frame, which isn't a zoom
+            // either of them made and so isn't this button's to undo.
+            zoomedArea || this._manualZoom !== 1
+              ? html`<button
+                  class="zoom-out"
+                  title="Reset zoom"
+                  aria-label="Reset zoom"
+                  @click=${() => {
+                    this._zoomedAreaId = undefined;
+                    this._manualZoom = 1;
+                  }}
+                >
+                  <ha-icon icon="mdi:magnify-minus-outline"></ha-icon>
+                </button>`
+              : nothing
+          }
+          <div class="zoom-controls">
+            <button aria-label="Zoom out" title="Zoom out" @click=${() => this._setManualZoom(this._manualZoom - 0.25)}>
+              <ha-icon icon="mdi:minus"></ha-icon>
+            </button>
+            <button
+              class="zoom-val-btn"
+              title="Reset manual zoom"
+              @click=${() => this._setManualZoom(1)}
+            >
+              ${Math.round(this._manualZoom * 100)}%
+            </button>
+            <button aria-label="Zoom in" title="Zoom in" @click=${() => this._setManualZoom(this._manualZoom + 0.25)}>
+              <ha-icon icon="mdi:plus"></ha-icon>
+            </button>
+          </div>
           ${compactTitle ? html`<div class="plan-title">${c.title}</div>` : nothing}
           ${floors.length > 1 ? this._renderFloorSwitcher(floors, active, compact) : nothing}
         </div>
@@ -1501,6 +1554,37 @@ export class FloorplanCard extends LitElement {
        moves, dropping below the chip rather than landing on top of it. */
     .stage.compact-title .zoom-out {
       top: 38px;
+    }
+    /* Manual zoom controls (Marco's fork) — bottom-right, same corner and
+       button styling family as the editor's own zoom overlay, so the live
+       card and the editor agree on what "zoom controls" look like. */
+    .zoom-controls {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      z-index: 1;
+      display: flex;
+      gap: 4px;
+    }
+    .zoom-controls button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      border-radius: 6px;
+      padding: 3px 7px;
+      font-size: 12px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+    .zoom-controls ha-icon {
+      --mdc-icon-size: 15px;
+    }
+    .zoom-controls .zoom-val-btn {
+      min-width: 42px;
+      justify-content: center;
     }
     .area-tap-target {
       cursor: pointer;
