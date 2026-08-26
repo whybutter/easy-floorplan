@@ -3065,9 +3065,17 @@ export function resolvePlanRotation(
   v: unknown,
   planWidth: number,
   planHeight: number,
-  viewportLandscape: boolean
+  viewportLandscape: boolean,
+  landscapeOverride?: unknown,
+  portraitOverride?: unknown
 ): PlanRotation {
   if (v !== "auto") return normalizePlanRotation(v);
+  // Manual per-orientation pin (Marco's fork) beats the match-orientation
+  // heuristic below — "auto" then means "auto *which of my two answers*",
+  // not "auto-compute one". Either can be set without the other; an unset
+  // one still falls through to the heuristic for that orientation only.
+  if (viewportLandscape && landscapeOverride != null) return normalizePlanRotation(landscapeOverride);
+  if (!viewportLandscape && portraitOverride != null) return normalizePlanRotation(portraitOverride);
   const planLandscape = planWidth >= planHeight;
   return planLandscape === viewportLandscape ? 0 : 90;
 }

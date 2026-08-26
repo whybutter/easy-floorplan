@@ -1192,6 +1192,16 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
    */
   rotation?: number | "auto";
   /**
+   * With `rotation: "auto"`, use this fixed step instead of the match-orientation
+   * heuristic whenever the viewport is landscape. Lets a plan pin its own
+   * choice per orientation (e.g. "always 90 in landscape") rather than just
+   * "whatever makes the shapes agree" — set one, both, or neither. Ignored
+   * when `rotation` isn't `"auto"`. See `resolvePlanRotation`.
+   */
+  rotationLandscape?: number;
+  /** As {@link rotationLandscape}, for a portrait viewport. */
+  rotationPortrait?: number;
+  /**
    * Built-in skin id (issue #122), e.g. `odnetnin`, `pastel`, `tron`. Restyles
    * the whole plan at once — paper, walls, badges, accents — by supplying the
    * fallbacks every element already reads.

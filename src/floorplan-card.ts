@@ -207,7 +207,7 @@ export class FloorplanCard extends LitElement {
       if (raw[key] != null && !Array.isArray(raw[key]))
         throw new Error(`Invalid configuration: "${key}" must be a list`);
     }
-    for (const key of ["width", "height", "grid"]) {
+    for (const key of ["width", "height", "grid", "rotationLandscape", "rotationPortrait"]) {
       if (raw[key] != null && typeof raw[key] !== "number")
         throw new Error(`Invalid configuration: "${key}" must be a number`);
     }
@@ -793,7 +793,9 @@ export class FloorplanCard extends LitElement {
       c.rotation,
       cssNumber(c.width, DEFAULT_WIDTH),
       cssNumber(c.height, DEFAULT_HEIGHT),
-      this._viewportLandscape
+      this._viewportLandscape,
+      c.rotationLandscape,
+      c.rotationPortrait
     );
     const dims = rotatedCanvasSize(cssNumber(c.width, DEFAULT_WIDTH), cssNumber(c.height, DEFAULT_HEIGHT), rot);
     const rotTransform = planRotationTransform(c.width, c.height, rot);
