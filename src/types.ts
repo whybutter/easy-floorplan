@@ -1284,13 +1284,14 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
    * configured `width`/`height` canvas (Marco's fork). A multi-floor plan
    * shares one canvas size across floors that can have very different
    * footprints — a small loft on the same canvas as a full ground floor reads
-   * as "zoomed way out" next to it. On, the floor with nothing tapped into it
-   * (see `zoomedArea`) auto-frames its own walls/areas/furniture/items/etc.
-   * instead, via the same {@link areaZoomTransform} zoom-to-room already uses.
-   * A floor with nothing on it yet just shows the full canvas. Off by
-   * default: existing plans that rely on every floor sharing one exact scale
-   * (e.g. a background image traced at canvas size) should not change shape
-   * on upgrade.
+   * as "zoomed way out" next to it. On (the default), the floor with nothing
+   * tapped into it (see `zoomedArea`) auto-frames its own
+   * walls/areas/furniture/items/etc. instead, via the same
+   * {@link areaZoomTransform} zoom-to-room already uses. A floor with nothing
+   * on it yet just shows the full canvas. Set `fitFloor: false` to opt out —
+   * e.g. a plan that relies on every floor sharing one exact scale (a
+   * background image traced at canvas size) shouldn't have its shape change
+   * from under it.
    */
   fitFloor?: boolean;
   /**
