@@ -1184,8 +1184,13 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
    * landscape plan on a portrait wall tablet. Coordinates stay unrotated —
    * the editor always shows the plan as drawn. Values other than
    * 0/90/180/270 are normalized (see normalizePlanRotation).
+   *
+   * `"auto"` (Marco's fork) picks 0 or 90 at render time to match the
+   * viewport's own orientation to the plan's — e.g. a plan drawn tall
+   * automatically turns landscape on a landscape monitor, and turns back on a
+   * phone held portrait. See `resolvePlanRotation`.
    */
-  rotation?: number;
+  rotation?: number | "auto";
   /**
    * Built-in skin id (issue #122), e.g. `odnetnin`, `pastel`, `tron`. Restyles
    * the whole plan at once — paper, walls, badges, accents — by supplying the
@@ -1264,6 +1269,20 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
    * to make, so it is theirs to switch on.
    */
   showDeadSpaces?: boolean;
+  /**
+   * Fit each floor to its own content instead of always showing the full
+   * configured `width`/`height` canvas (Marco's fork). A multi-floor plan
+   * shares one canvas size across floors that can have very different
+   * footprints — a small loft on the same canvas as a full ground floor reads
+   * as "zoomed way out" next to it. On, the floor with nothing tapped into it
+   * (see `zoomedArea`) auto-frames its own walls/areas/furniture/items/etc.
+   * instead, via the same {@link areaZoomTransform} zoom-to-room already uses.
+   * A floor with nothing on it yet just shows the full canvas. Off by
+   * default: existing plans that rely on every floor sharing one exact scale
+   * (e.g. a background image traced at canvas size) should not change shape
+   * on upgrade.
+   */
+  fitFloor?: boolean;
   /**
    * Follow the real sun (issue #113): dim the plan through dusk and brighten
    * it through dawn, tracking the **Home Assistant instance's** own sunrise

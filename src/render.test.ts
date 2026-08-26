@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { html, nothing } from "lit";
-import type { Area, Furniture, FurnitureType, ItemKind, ItemReading } from "./types";
+import type { Area, Floor, Furniture, FurnitureType, ItemKind, ItemReading } from "./types";
 import { SKIN_ACCENT, SKIN_WALL, MAX_SKIN_WALL_WIDTH } from "./skins";
 import {
   DEFAULT_GLOW_RADIUS,
@@ -119,12 +119,16 @@ import {
   isRippleEntity,
   itemIconSize,
   normalizePlanRotation,
+  resolvePlanRotation,
   rotatedCanvasSize,
   rotatePlanPoint,
   planRotationTransform,
   polygonCentroid,
   areaZoomTransform,
   IDENTITY_ZOOM,
+  floorContentBounds,
+  FIT_FLOOR_PAD,
+  FIT_FLOOR_MAX_SCALE,
   renderArea,
   renderAreaBorder,
   WALL_THICKNESS,
@@ -1775,6 +1779,34 @@ describe("plan rotation (issue #33)", () => {
     expect(rotatedCanvasSize(W, H, 90)).toEqual({ w: H, h: W });
     expect(rotatedCanvasSize(W, H, 180)).toEqual({ w: W, h: H });
     expect(rotatedCanvasSize(W, H, 270)).toEqual({ w: H, h: W });
+  });
+
+  describe("resolvePlanRotation (Marco's fork)", () => {
+    it("passes an explicit numeric rotation straight through, ignoring the viewport", () => {
+      expect(resolvePlanRotation(90, W, H, true)).toBe(90);
+      expect(resolvePlanRotation(90, W, H, false)).toBe(90);
+      expect(resolvePlanRotation(180, W, H, true)).toBe(180);
+      expect(resolvePlanRotation(undefined, W, H, true)).toBe(0);
+    });
+
+    it("with \"auto\", turns a portrait plan landscape on a landscape viewport", () => {
+      // Plan is taller than wide (portrait); viewport is landscape.
+      expect(resolvePlanRotation("auto", 600, 1000, true)).toBe(90);
+    });
+
+    it("with \"auto\", turns a landscape plan portrait on a portrait viewport", () => {
+      expect(resolvePlanRotation("auto", 1000, 600, false)).toBe(90);
+    });
+
+    it("with \"auto\", leaves a plan alone when its orientation already matches the viewport", () => {
+      expect(resolvePlanRotation("auto", 1000, 600, true)).toBe(0); // landscape plan, landscape viewport
+      expect(resolvePlanRotation("auto", 600, 1000, false)).toBe(0); // portrait plan, portrait viewport
+    });
+
+    it("with \"auto\", treats a square plan as landscape (>=), so it only turns on a portrait viewport", () => {
+      expect(resolvePlanRotation("auto", 800, 800, true)).toBe(0);
+      expect(resolvePlanRotation("auto", 800, 800, false)).toBe(90);
+    });
   });
 
   it("maps corners of the plan onto corners of the rotated frame", () => {
@@ -3576,6 +3608,105 @@ describe("areaZoomTransform", () => {
       { x: 0, y: 10 },
     ];
     expect(areaZoomTransform(room, 100, 100, 0)).toEqual(IDENTITY_ZOOM);
+  });
+});
+
+const emptyFloor = (): Floor =>
+  ({
+    id: "f",
+    name: "F",
+    walls: [],
+    openings: [],
+    items: [],
+    texts: [],
+    furniture: [],
+    trackers: [],
+    areas: [],
+  }) as unknown as Floor;
+
+describe("floorContentBounds (Marco's fork, fitFloor)", () => {
+  it("returns null for a floor with nothing on it", () => {
+    expect(floorContentBounds(emptyFloor())).toBeNull();
+  });
+
+  it("collects both endpoints of every wall", () => {
+    const floor = { ...emptyFloor(), walls: [{ id: "w", x1: 10, y1: 20, x2: 90, y2: 20 }] };
+    const pts = floorContentBounds(floor as Floor)!;
+    expect(pts).toContainEqual({ x: 10, y: 20 });
+    expect(pts).toContainEqual({ x: 90, y: 20 });
+  });
+
+  it("collects an opening's own point", () => {
+    const floor = { ...emptyFloor(), openings: [{ id: "o", type: "door", x: 42, y: 7 }] };
+    expect(floorContentBounds(floor as Floor)).toContainEqual({ x: 42, y: 7 });
+  });
+
+  it("collects a device item's own point", () => {
+    const floor = { ...emptyFloor(), items: [{ id: "i", kind: "light", x: 5, y: 6, entity: "light.a" }] };
+    expect(floorContentBounds(floor as Floor)).toContainEqual({ x: 5, y: 6 });
+  });
+
+  it("collects an unrotated furniture piece's 4 corners", () => {
+    const floor = {
+      ...emptyFloor(),
+      furniture: [{ id: "f1", type: "bed", x: 100, y: 100, w: 20, h: 10 }],
+    };
+    const pts = floorContentBounds(floor as Floor)!;
+    for (const c of [
+      { x: 90, y: 95 },
+      { x: 110, y: 95 },
+      { x: 110, y: 105 },
+      { x: 90, y: 105 },
+    ]) {
+      expect(pts.some((p) => Math.abs(p.x - c.x) < 1e-9 && Math.abs(p.y - c.y) < 1e-9)).toBe(true);
+    }
+  });
+
+  it("rotates a furniture piece's corners about its own center", () => {
+    // A 20x10 piece at (0,0) rotated 90° should present as if it were 10x20 —
+    // its "long" corners swing onto the y axis instead of the x axis.
+    const floor = {
+      ...emptyFloor(),
+      furniture: [{ id: "f1", type: "bed", x: 0, y: 0, w: 20, h: 10, angle: 90 }],
+    };
+    const pts = floorContentBounds(floor as Floor)!;
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(10);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(20);
+  });
+
+  it("treats a tracker's x/y as its top-left corner, not its center", () => {
+    const floor = { ...emptyFloor(), trackers: [{ id: "t", x: 0, y: 0, w: 40, h: 20 }] };
+    const pts = floorContentBounds(floor as Floor)!;
+    expect(pts).toContainEqual({ x: 0, y: 0 });
+    expect(pts).toContainEqual({ x: 40, y: 20 });
+  });
+
+  it("collects every vertex of every area polygon", () => {
+    const floor = {
+      ...emptyFloor(),
+      areas: [{ id: "a", name: "A", points: [{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: 5, y: 6 }] }],
+    };
+    const pts = floorContentBounds(floor as Floor)!;
+    expect(pts).toContainEqual({ x: 1, y: 2 });
+    expect(pts).toContainEqual({ x: 3, y: 4 });
+    expect(pts).toContainEqual({ x: 5, y: 6 });
+  });
+
+  it("feeds areaZoomTransform to fit a small floor's actual footprint, not the full canvas", () => {
+    // A small floor's walls sit in one corner of a much bigger shared canvas.
+    const floor = {
+      ...emptyFloor(),
+      walls: [
+        { id: "w1", x1: 0, y1: 0, x2: 100, y2: 0 },
+        { id: "w2", x1: 100, y1: 0, x2: 100, y2: 100 },
+      ],
+    };
+    const bounds = floorContentBounds(floor as Floor)!;
+    const t = areaZoomTransform(bounds, 1000, 1000, 0, FIT_FLOOR_PAD, FIT_FLOOR_MAX_SCALE);
+    expect(t.scale).toBeGreaterThan(1);
+    expect(t.scale).toBeLessThanOrEqual(FIT_FLOOR_MAX_SCALE);
   });
 });
 

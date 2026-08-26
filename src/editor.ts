@@ -206,6 +206,20 @@ const SEL_KIND_ICON: Record<SelKind, string> = {
   area: "mdi:floor-plan",
 };
 
+/** Plural label per kind, for the Layers panel — same order as {@link PICK_ORDER}. */
+const LAYER_LABEL: Record<SelKind, string> = {
+  item: "Devices",
+  text: "Text",
+  opening: "Doors & windows",
+  furniture: "Furniture",
+  wall: "Walls",
+  tracker: "Trackers",
+  area: "Areas",
+};
+
+/** Panel order for the Layers popover — most-specific (safest to leave on top) first. */
+const LAYER_ORDER: SelKind[] = ["item", "text", "opening", "furniture", "wall", "tracker", "area"];
+
 interface Drag {
   /** The element under the pointer (drives snapping); the whole selection moves with it. */
   primary: Sel;
@@ -383,6 +397,19 @@ export class FloorplanCardEditor extends LitElement {
    * shows. A dense plan is much easier to aim at without them.
    */
   @state() private _hideLabels = false;
+  /**
+   * Layers panel (Marco's fork, 2026-08-26): per-kind show/hide and lock,
+   * addressing the same "dense plan is hard to aim at" problem as
+   * `_hideLabels` and the click-cycling picker, but for whole element kinds
+   * rather than one label or one click at a time. Editor view state only —
+   * never written to the config, so it can't change what the live card shows.
+   * Hidden kinds are skipped from rendering entirely (so they can't eat a
+   * click either); locked kinds still render and show, but are excluded from
+   * hit-testing so they can't be selected or dragged by accident.
+   */
+  @state() private _layerHidden: Partial<Record<SelKind, boolean>> = {};
+  @state() private _layerLocked: Partial<Record<SelKind, boolean>> = {};
+  @state() private _layersOpen = false;
   /** Live touch points on the canvas wrap, for pinch-zoom (issue #38). */
   private _pinchPts = new Map<number, { x: number; y: number }>();
   /** Pinch baseline: finger distance, zoom, and centroid (content coords) at pinch start. */
@@ -1000,12 +1027,13 @@ export class FloorplanCardEditor extends LitElement {
       // marquee, then clear the selection. Only swallow the key when it
       // actually did something, so HA's dialog still closes on Escape when
       // there's nothing to cancel.
-      if (this._floorMenuOpen || this._addMenuOpen) {
+      if (this._floorMenuOpen || this._addMenuOpen || this._layersOpen) {
         ev.preventDefault();
         ev.stopPropagation();
         this._floorMenuOpen = false;
         this._addMenuOpen = false;
         this._addQuery = "";
+        this._layersOpen = false;
         return;
       }
       if (this._draft || this._draftTracker || this._draftArea || this._marquee || this._drag) {
@@ -1305,7 +1333,7 @@ export class FloorplanCardEditor extends LitElement {
       itemSize: DEFAULT_ITEM_SIZE,
       textSize: DEFAULT_TEXT_SIZE,
       wallThickness: WALL_THICKNESS,
-    });
+    }).filter((c) => !this._layerHidden[c.kind] && !this._layerLocked[c.kind]);
     const sameSpot =
       !!this._pickAnchor &&
       Math.hypot(ev.clientX - this._pickAnchor.clientX, ev.clientY - this._pickAnchor.clientY) <=
@@ -1320,9 +1348,17 @@ export class FloorplanCardEditor extends LitElement {
     if (this._gesturePointer !== null) return;
     this._canvasWrap?.focus();
     // Endpoint/vertex handles always operate on that single element; every
-    // other click goes through the overlap-aware picker (issue #52).
+    // other click goes through the overlap-aware picker (issue #52), which
+    // already excludes locked/hidden kinds from its candidates. A locked
+    // element's own shapes still render and take the initial pointerdown, so
+    // a plain (non-explicit) click on one still gets re-resolved to whatever
+    // unlocked element is really at that point, if any — only when the
+    // *final* pick is itself locked (an explicit handle on a locked element,
+    // or nothing unlocked was found and the picker fell back to `sel`) do we
+    // bail without selecting or dragging anything (Marco's fork, layers panel).
     const explicitHandle = endpoint != null || areaVertex != null;
     const pick = explicitHandle ? sel : this._resolvePick(ev, sel);
+    if (this._layerLocked[pick.kind]) return;
     if (explicitHandle) this._selectOne(pick);
     else this._selectForPointer(ev, pick);
     this._drag = {
@@ -1501,6 +1537,7 @@ export class FloorplanCardEditor extends LitElement {
     if (this._gesturePointer !== null) return;
     this._canvasWrap?.focus();
     const pick = this._resolvePick(ev, sel);
+    if (this._layerLocked[pick.kind]) return;
     this._selectForPointer(ev, pick);
     this._drag = {
       primary: pick,
@@ -2863,13 +2900,14 @@ export class FloorplanCardEditor extends LitElement {
         popover=${this._fullscreen ? "manual" : nothing}
         @pointerdown=${this._onEditorPointerDown}
       >
-        ${this._floorMenuOpen || this._addMenuOpen
+        ${this._floorMenuOpen || this._addMenuOpen || this._layersOpen
           ? html`<div
               class="pop-backdrop"
               @click=${() => {
                 this._floorMenuOpen = false;
                 this._addMenuOpen = false;
                 this._addQuery = "";
+                this._layersOpen = false;
               }}
             ></div>`
           : nothing}
@@ -2950,6 +2988,28 @@ export class FloorplanCardEditor extends LitElement {
             ></ha-icon>
             Labels
           </button>
+
+          <!-- Layers: per-kind show/hide + lock (Marco's fork) — the same
+               "dense plan is hard to aim at" problem as Labels and the
+               click-cycling picker (issue #52), but for a whole kind of
+               element at once instead of one label or one click. -->
+          <span class="pop-wrap">
+            <button
+              class="icon-btn"
+              aria-haspopup="true"
+              aria-expanded=${this._layersOpen}
+              title="Show/hide or lock each kind of element"
+              @click=${() => {
+                this._layersOpen = !this._layersOpen;
+                this._addMenuOpen = false;
+                this._floorMenuOpen = false;
+              }}
+            >
+              <ha-icon icon="mdi:layers-outline"></ha-icon>
+              Layers
+            </button>
+            ${this._layersOpen ? this._renderLayersMenu() : nothing}
+          </span>
 
           <span class="divider"></span>
 
@@ -3175,11 +3235,13 @@ export class FloorplanCardEditor extends LitElement {
                             opacity=${floor.imageOpacity ?? 1} />`
                 : nothing}
               ${this._renderGrid()}
-              ${repeat(
-                floor.areas ?? [],
-                (a, i) => a.id || i,
-                (a) => this._renderAreaSel(a, scopingAreaId)
-              )}
+              ${this._layerHidden.area
+                ? nothing
+                : repeat(
+                    floor.areas ?? [],
+                    (a, i) => a.id || i,
+                    (a) => this._renderAreaSel(a, scopingAreaId)
+                  )}
               <!-- Dead spaces (issue #88), same layer position as the card so
                    what you draw is what you get. Live while you draw: closing
                    the last wall of a shaft hatches it, and dropping a door into
@@ -3229,9 +3291,11 @@ export class FloorplanCardEditor extends LitElement {
                     : nothing
                 )
               }
-              ${floor.furniture.map((f) => this._renderFurnitureSel(f))}
+              ${this._layerHidden.furniture
+                ? nothing
+                : floor.furniture.map((f) => this._renderFurnitureSel(f))}
               ${renderWallMask(floor.openings, c.width, c.height, this._wallMaskId)}
-              ${floor.walls.map((w) => this._renderWall(w))}
+              ${this._layerHidden.wall ? nothing : floor.walls.map((w) => this._renderWall(w))}
               <!-- Room outlines, same layer position as the card so what you
                    place is what you get. Only a static borderColor draws here,
                    there being no hass to resolve a live color from — but the
@@ -3242,19 +3306,23 @@ export class FloorplanCardEditor extends LitElement {
                   renderAreaBorder(a, undefined, `${this._wallMaskId}-area-${i}`)
                 )}
               </g>
-              ${repeat(
-                // Keyed by id: switching floors must create fresh DOM. Reused
-                // nodes would CSS-transition from the previous floor's opening
-                // state — a window briefly plays a door swing (issue #50).
-                floor.openings,
-                (o, i) => o.id || i,
-                (o) => this._renderOpeningSel(o)
-              )}
-              ${repeat(
-                floor.trackers ?? [],
-                (tr, i) => tr.id || i,
-                (tr) => this._renderTrackerSel(tr)
-              )}
+              ${this._layerHidden.opening
+                ? nothing
+                : repeat(
+                    // Keyed by id: switching floors must create fresh DOM. Reused
+                    // nodes would CSS-transition from the previous floor's opening
+                    // state — a window briefly plays a door swing (issue #50).
+                    floor.openings,
+                    (o, i) => o.id || i,
+                    (o) => this._renderOpeningSel(o)
+                  )}
+              ${this._layerHidden.tracker
+                ? nothing
+                : repeat(
+                    floor.trackers ?? [],
+                    (tr, i) => tr.id || i,
+                    (tr) => this._renderTrackerSel(tr)
+                  )}
               ${
                 this._draftTracker
                   ? svg`<rect class="tracker-draft"
@@ -3286,14 +3354,22 @@ export class FloorplanCardEditor extends LitElement {
             </svg>`
             )}
             <div class="items">
-              ${floor.texts.map((t) => this._renderTextOverlay(t, c, overlay))}
-              ${floor.openings
-                .filter((o) => hasShutterMark(o))
-                .map((o) => this._renderShutterMarkOverlay(o, c, overlay))}
-              ${floor.openings
-                .filter((o) => hasOpeningMark(o))
-                .map((o) => this._renderOpeningMarkOverlay(o, c, overlay))}
-              ${floor.items.map((it) => this._renderItemOverlay(it, c, overlay))}
+              ${this._layerHidden.text
+                ? nothing
+                : floor.texts.map((t) => this._renderTextOverlay(t, c, overlay))}
+              ${this._layerHidden.opening
+                ? nothing
+                : floor.openings
+                    .filter((o) => hasShutterMark(o))
+                    .map((o) => this._renderShutterMarkOverlay(o, c, overlay))}
+              ${this._layerHidden.opening
+                ? nothing
+                : floor.openings
+                    .filter((o) => hasOpeningMark(o))
+                    .map((o) => this._renderOpeningMarkOverlay(o, c, overlay))}
+              ${this._layerHidden.item
+                ? nothing
+                : floor.items.map((it) => this._renderItemOverlay(it, c, overlay))}
             </div>
           </div>
         </div>
@@ -3668,6 +3744,54 @@ export class FloorplanCardEditor extends LitElement {
    * community library behind it the list only grows, so the query filters on id,
    * name, category and the symbol's own keywords — "couch" finds the sofa.
    */
+  /**
+   * Layers popover (Marco's fork): one row per {@link SelKind}, an eye toggle
+   * (render this kind at all — hidden kinds also drop out of hit-testing, see
+   * `_resolvePick`) and a lock toggle (keep rendering and showing it, but
+   * exclude it from picking so it can't be selected or dragged by accident).
+   * Same order as {@link LAYER_ORDER} / `PICK_ORDER`: most-specific first,
+   * Areas last, since an Area is the one you're most likely to want locked
+   * once its walls and openings are placed.
+   */
+  private _renderLayersMenu(): TemplateResult {
+    return html`
+      <div class="pop left layers-pop">
+        ${LAYER_ORDER.map((kind) => {
+          const hidden = !!this._layerHidden[kind];
+          const locked = !!this._layerLocked[kind];
+          return html`
+            <div class="layer-row">
+              <ha-icon icon=${SEL_KIND_ICON[kind]}></ha-icon>
+              <span class="layer-name">${LAYER_LABEL[kind]}</span>
+              <button
+                class="icon-btn"
+                aria-pressed=${hidden}
+                title=${hidden ? `Show ${LAYER_LABEL[kind]}` : `Hide ${LAYER_LABEL[kind]}`}
+                @click=${() => {
+                  this._layerHidden = { ...this._layerHidden, [kind]: !hidden };
+                }}
+              >
+                <ha-icon icon=${hidden ? "mdi:eye-off-outline" : "mdi:eye-outline"}></ha-icon>
+              </button>
+              <button
+                class="icon-btn"
+                aria-pressed=${locked}
+                title=${locked
+                  ? `Unlock ${LAYER_LABEL[kind]} — selectable again`
+                  : `Lock ${LAYER_LABEL[kind]} — visible but not selectable`}
+                @click=${() => {
+                  this._layerLocked = { ...this._layerLocked, [kind]: !locked };
+                }}
+              >
+                <ha-icon icon=${locked ? "mdi:lock-outline" : "mdi:lock-open-variant-outline"}></ha-icon>
+              </button>
+            </div>
+          `;
+        })}
+      </div>
+    `;
+  }
+
   private _renderAddMenu(): TemplateResult {
     const close = () => {
       this._addMenuOpen = false;
@@ -5395,6 +5519,22 @@ export class FloorplanCardEditor extends LitElement {
     }
     .add-pop {
       min-width: 300px;
+    }
+    .layers-pop {
+      min-width: 240px;
+    }
+    .layer-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 2px;
+    }
+    .layer-row:not(:last-child) {
+      border-bottom: 1px solid var(--divider-color, #eee);
+    }
+    .layer-name {
+      flex: 1;
+      font-size: 13px;
     }
     .add-entry {
       display: flex;

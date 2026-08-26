@@ -360,7 +360,8 @@ The editor writes this config for you; manual editing is optional.
 | `height`     | number   | `600`              | Virtual canvas height, in canvas units.      |
 | `grid`       | number   | `20`               | Gap between grid lines, in canvas units — smaller means finer. |
 | `snap`       | number   | follows `grid`     | Snap step in canvas units, always absolute. Omit to follow the grid, `0` for free placement. The editor shows a custom step as a percentage of the grid. |
-| `rotation`   | number   | `0`                | Rotate the card `90`, `180` or `270`° — a landscape plan on a portrait wall tablet. Icons and labels stay upright; the editor always shows the plan as drawn. |
+| `rotation`   | number \| `"auto"` | `0`  | Rotate the card `90`, `180` or `270`° — a landscape plan on a portrait wall tablet. Icons and labels stay upright; the editor always shows the plan as drawn. `"auto"` picks `0` or `90` at render time to match the plan's orientation to the *viewport's* (window width vs height) instead of a fixed step — a plan drawn tall turns landscape on a landscape monitor and back again on a phone held portrait. |
+| `fitFloor` | boolean | `false` | Fit each floor to its own content instead of always showing the full `width`/`height` canvas. A multi-floor plan shares one canvas across floors that can have very different footprints — without this, the smaller one reads as "zoomed way out" next to the others. Tapping into a room (zoom-to-room) always overrides this. |
 | `showDeadSpaces` | boolean | `false` | Hatch every space the walls seal off that no door or window reaches, worked out from the walls and openings themselves. See [Dead spaces](#dead-spaces). |
 | `sunDimming` | boolean | `false` | Dim through dusk, brighten through dawn, from the HA instance's sun. See [Follow the sun](#follow-the-sun). |
 | `sunBrightnessMin` | number | `0.45` | Brightness once the sun is fully down, 0–1. |

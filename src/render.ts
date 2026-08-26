@@ -3051,6 +3051,27 @@ export function normalizePlanRotation(v: unknown): PlanRotation {
   return r === 90 || r === 180 || r === 270 ? r : 0;
 }
 
+/**
+ * Resolve a config `rotation` to a concrete step, same as
+ * {@link normalizePlanRotation} except for the literal `"auto"` (Marco's
+ * fork): picks whichever of 0 / 90 makes the plan's own orientation
+ * (landscape/portrait, from its unrotated `width`/`height`) match the
+ * viewport's — 180/270 are never chosen automatically, since they don't
+ * change which axis is longer and so never affect the fit either way.
+ * An explicit numeric `rotation` always wins; "auto" only applies when the
+ * plan author hasn't picked a fixed orientation themselves.
+ */
+export function resolvePlanRotation(
+  v: unknown,
+  planWidth: number,
+  planHeight: number,
+  viewportLandscape: boolean
+): PlanRotation {
+  if (v !== "auto") return normalizePlanRotation(v);
+  const planLandscape = planWidth >= planHeight;
+  return planLandscape === viewportLandscape ? 0 : 90;
+}
+
 /** Canvas size as displayed: 90°/270° swap width and height. */
 export function rotatedCanvasSize(
   w: number,
@@ -3880,6 +3901,16 @@ export function polygonCentroid(points: readonly AreaPoint[]): { x: number; y: n
 /** Neutral (unzoomed) result of {@link areaZoomTransform} — identity view. */
 export const IDENTITY_ZOOM: AreaZoomTransform = { scale: 1, txPercent: 0, tyPercent: 0 };
 
+/**
+ * {@link areaZoomTransform} tuning for `fitFloor` (Marco's fork): a looser
+ * pad than the 0.15 default room-zoom uses, since a whole floor's silhouette
+ * is more irregular than one room's box and wants a little more breathing
+ * room; a lower max scale, since fitting a floor is about *not showing empty
+ * canvas*, not about magnifying a genuinely tiny floor to fill the frame.
+ */
+export const FIT_FLOOR_PAD = 0.2;
+export const FIT_FLOOR_MAX_SCALE = 2.5;
+
 export interface AreaZoomTransform {
   /** Uniform scale applied to the whole plan. */
   scale: number;
@@ -3950,6 +3981,62 @@ export function areaZoomTransform(
     txPercent: clamp(50 - scale * cxFrac * 100),
     tyPercent: clamp(50 - scale * cyFrac * 100),
   };
+}
+
+/** A box's 4 corners rotated `angle` degrees about its own center, in world space. */
+function rotatedCorners(cx: number, cy: number, w: number, h: number, angle = 0): AreaPoint[] {
+  const rad = (angle * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const hw = w / 2;
+  const hh = h / 2;
+  return [
+    [-hw, -hh],
+    [hw, -hh],
+    [hw, hh],
+    [-hw, hh],
+  ].map(([lx, ly]) => ({ x: cx + lx * cos - ly * sin, y: cy + lx * sin + ly * cos }));
+}
+
+/**
+ * Every element's footprint on a floor, flattened to plain points — feeds
+ * {@link areaZoomTransform} so a floor with a smaller footprint than the
+ * canvas (issue: Marco's fork, "trim whitespace between floors") can fit
+ * itself instead of always showing the full configured `width`/`height`,
+ * whatever the *other* floors need.
+ *
+ * Deliberately approximate, same spirit as the editor's hit-testing: walls
+ * contribute both endpoints, furniture and trackers their (rotated) corners,
+ * everything else its own point. A bounding box from this is never smaller
+ * than the true content, which is what matters for "don't crop anything off".
+ *
+ * `null` for a floor with nothing on it — the caller falls back to showing
+ * the full canvas rather than zooming into an undefined empty point.
+ */
+export function floorContentBounds(floor: Floor): AreaPoint[] | null {
+  const pts: AreaPoint[] = [];
+  for (const w of floor.walls) {
+    pts.push({ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 });
+  }
+  for (const o of floor.openings) {
+    pts.push({ x: o.x, y: o.y });
+  }
+  for (const f of floor.furniture) {
+    pts.push(...rotatedCorners(f.x, f.y, f.w, f.h, f.angle));
+  }
+  for (const it of floor.items) {
+    pts.push({ x: it.x, y: it.y });
+  }
+  for (const t of floor.texts) {
+    pts.push({ x: t.x, y: t.y });
+  }
+  for (const tr of floor.trackers ?? []) {
+    pts.push(...rotatedCorners(tr.x + tr.w / 2, tr.y + tr.h / 2, tr.w, tr.h, tr.angle));
+  }
+  for (const a of floor.areas ?? []) {
+    pts.push(...a.points);
+  }
+  return pts.length ? pts : null;
 }
 
 /**

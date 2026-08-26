@@ -107,12 +107,15 @@ import {
   resolveItemIcon,
   resolveIconAnimation,
   itemIconSize,
-  normalizePlanRotation,
   rotatedCanvasSize,
   rotatePlanPoint,
   planRotationTransform,
   areaZoomTransform,
   IDENTITY_ZOOM,
+  floorContentBounds,
+  resolvePlanRotation,
+  FIT_FLOOR_PAD,
+  FIT_FLOOR_MAX_SCALE,
   type PlanRotation,
 } from "./render";
 import { symbolCatalog } from "./symbols";
@@ -158,11 +161,40 @@ export class FloorplanCard extends LitElement {
   @state() private _activeFloorId?: string;
   /** View-state: which area (if any) the plan is zoomed in to. Never persisted. */
   @state() private _zoomedAreaId?: string;
+  /**
+   * The *viewport's* own orientation (Marco's fork) — window width vs height,
+   * not this card's own box, since a card's width is usually dictated by a
+   * dashboard grid column regardless of the screen it's on. Drives
+   * `rotation: "auto"` via `resolvePlanRotation`. Kept in sync by a `resize`
+   * listener (also fires on mobile orientation change) added/removed in
+   * `connectedCallback`/`disconnectedCallback`.
+   */
+  @state() private _viewportLandscape = FloorplanCard._readViewportLandscape();
+  private readonly _onViewportResize = (): void => {
+    const landscape = FloorplanCard._readViewportLandscape();
+    if (landscape !== this._viewportLandscape) this._viewportLandscape = landscape;
+  };
+  private static _readViewportLandscape(): boolean {
+    return typeof window === "undefined" || window.innerWidth >= window.innerHeight;
+  }
   private readonly _wallMaskId = `fp-wall-mask-${FloorplanCard._nextWallMaskId++}`;
   /** Prefix for this card's glow gradient ids, unique per instance (issue #6). */
   private readonly _glowIdBase = `fp-glow-${FloorplanCard._nextGlowId++}`;
   /** Entity ids this plan actually displays; used to skip irrelevant hass updates. */
   private _watchedEntities: Set<string> = new Set();
+
+  public connectedCallback(): void {
+    super.connectedCallback();
+    // Re-read on reconnect too — the viewport can have changed orientation
+    // while this card was off-screen (e.g. a dashboard tab switch on mobile).
+    this._onViewportResize();
+    window.addEventListener("resize", this._onViewportResize);
+  }
+
+  public disconnectedCallback(): void {
+    window.removeEventListener("resize", this._onViewportResize);
+    super.disconnectedCallback();
+  }
 
   public setConfig(config: FloorplanCardConfig): void {
     // Cheap shape assertions so malformed YAML surfaces as HA's error card
@@ -175,10 +207,15 @@ export class FloorplanCard extends LitElement {
       if (raw[key] != null && !Array.isArray(raw[key]))
         throw new Error(`Invalid configuration: "${key}" must be a list`);
     }
-    for (const key of ["width", "height", "grid", "rotation"]) {
+    for (const key of ["width", "height", "grid"]) {
       if (raw[key] != null && typeof raw[key] !== "number")
         throw new Error(`Invalid configuration: "${key}" must be a number`);
     }
+    // `rotation` also accepts the literal "auto" (Marco's fork) — resolved to
+    // a concrete 0/90/180/270 at render time by `resolvePlanRotation`, once
+    // the viewport's own orientation is known.
+    if (raw.rotation != null && typeof raw.rotation !== "number" && raw.rotation !== "auto")
+      throw new Error(`Invalid configuration: "rotation" must be a number or "auto"`);
     this._config = {
       ...config,
       width: config.width ?? DEFAULT_WIDTH,
@@ -750,7 +787,14 @@ export class FloorplanCard extends LitElement {
     // Whole-plan display rotation (issue #33): the SVG rotates via one group
     // transform below; the HTML overlay remaps per point in _renderItem /
     // _renderText. Both must use the same mapping (rotatePlanPoint).
-    const rot = normalizePlanRotation(c.rotation);
+    // `rotation: "auto"` (Marco's fork) resolves against the viewport's own
+    // orientation here, rather than a fixed step.
+    const rot = resolvePlanRotation(
+      c.rotation,
+      cssNumber(c.width, DEFAULT_WIDTH),
+      cssNumber(c.height, DEFAULT_HEIGHT),
+      this._viewportLandscape
+    );
     const dims = rotatedCanvasSize(cssNumber(c.width, DEFAULT_WIDTH), cssNumber(c.height, DEFAULT_HEIGHT), rot);
     const rotTransform = planRotationTransform(c.width, c.height, rot);
     // Overlay sizing mode. --fp-plan-w is the canvas width *as displayed*, so a
@@ -807,7 +851,16 @@ export class FloorplanCard extends LitElement {
     // completely differently (a group transform vs. per-point left/top%) —
     // reframe identically instead of drifting apart under zoom.
     const zoomedArea = active.areas?.find((a) => a.id === this._zoomedAreaId);
-    const zoom = zoomedArea ? areaZoomTransform(zoomedArea.points, c.width, c.height, rot) : IDENTITY_ZOOM;
+    // Trim whitespace (Marco's fork, `fitFloor`): a deliberate tap on a room
+    // always wins over the automatic per-floor fit, same as it wins over
+    // showing the full canvas — both are "reframe to something smaller than
+    // the whole plan", so an explicit one takes priority over an implicit one.
+    const floorBounds = !zoomedArea && c.fitFloor ? floorContentBounds(active) : null;
+    const zoom = zoomedArea
+      ? areaZoomTransform(zoomedArea.points, c.width, c.height, rot)
+      : floorBounds
+        ? areaZoomTransform(floorBounds, c.width, c.height, rot, FIT_FLOOR_PAD, FIT_FLOOR_MAX_SCALE)
+        : IDENTITY_ZOOM;
     // Chrome drawn inside the plan rather than above it (issue #152). The
     // flag is what the floor buttons follow; the chip needs a title as well,
     // and a compact card with no title has nothing to draw there.
