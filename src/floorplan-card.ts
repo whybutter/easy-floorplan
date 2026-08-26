@@ -877,11 +877,12 @@ export class FloorplanCard extends LitElement {
     // completely differently (a group transform vs. per-point left/top%) —
     // reframe identically instead of drifting apart under zoom.
     const zoomedArea = active.areas?.find((a) => a.id === this._zoomedAreaId);
-    // Trim whitespace (Marco's fork, `fitFloor`): a deliberate tap on a room
-    // always wins over the automatic per-floor fit, same as it wins over
-    // showing the full canvas — both are "reframe to something smaller than
-    // the whole plan", so an explicit one takes priority over an implicit one.
-    const floorBounds = !zoomedArea && c.fitFloor ? floorContentBounds(active) : null;
+    // Trim whitespace (Marco's fork, `fitFloor`): on by default (only
+    // `fitFloor: false` turns it off) — a deliberate tap on a room always
+    // wins over the automatic per-floor fit, same as it wins over showing
+    // the full canvas — both are "reframe to something smaller than the
+    // whole plan", so an explicit one takes priority over an implicit one.
+    const floorBounds = !zoomedArea && c.fitFloor !== false ? floorContentBounds(active) : null;
     const baseZoom = zoomedArea
       ? areaZoomTransform(zoomedArea.points, c.width, c.height, rot)
       : floorBounds
