@@ -1445,46 +1445,86 @@ export function projectSkinForm(c: FloorplanCardConfig): FormSpec {
  * they stay out of the way.
  */
 export function projectDisplayForm(c: FloorplanCardConfig): FormSpec {
+  const rotationIsAuto = c.rotation === "auto";
+  const fields: FormField[] = [
+    {
+      name: "rotation",
+      label: "Rotate display",
+      helper: rotationIsAuto
+        ? "Rotates the live card only — editing stays as drawn. Auto matches the plan's own shape to the viewport, or use the two rows below to pin an answer per orientation."
+        : "Rotates the live card only — editing stays as drawn",
+      selector: dropdown(
+        opt("0", "0°"),
+        opt("90", "90°"),
+        opt("180", "180°"),
+        opt("270", "270°"),
+        opt("auto", "Auto (match viewport)")
+      ),
+    },
+  ];
+  // Per-orientation pin (Marco's fork), only relevant once "Auto" is chosen —
+  // a fixed rotation already answers this on its own, so asking again would
+  // just be two ways to say the same thing.
+  if (rotationIsAuto) {
+    const orientationOptions = [
+      opt("", "Auto (match shape)"),
+      opt("0", "0°"),
+      opt("90", "90°"),
+      opt("180", "180°"),
+      opt("270", "270°"),
+    ];
+    fields.push(
+      {
+        name: "rotationLandscape",
+        label: "When viewport is landscape",
+        helper: "Pin a fixed rotation for landscape screens, instead of matching the plan's own shape",
+        selector: dropdown(...orientationOptions),
+      },
+      {
+        name: "rotationPortrait",
+        label: "When viewport is portrait",
+        helper: "Pin a fixed rotation for portrait screens, instead of matching the plan's own shape",
+        selector: dropdown(...orientationOptions),
+      }
+    );
+  }
+  fields.push(
+    {
+      name: "overlayScale",
+      label: "Badge & label size",
+      // Canvas units lead because they are what a plan wants and what a new
+      // plan is created with; fixed pixels are what an older plan is still
+      // laid out in, and the right answer for a card shown bigger than its
+      // canvas or a wall tablet that wants a px floor under its text.
+      helper: `Canvas units scale badges and labels with the drawing. Fixed pixels keep their size whatever width the card gets — suits a card rendered larger than its ${c.width}-wide canvas, or a wall tablet`,
+      selector: dropdown(opt("plan", "Canvas units"), opt("fixed", "Fixed pixels")),
+    },
+    {
+      name: "compactHeader",
+      label: "Compact header",
+      // Says what it costs as well as what it saves — the title lands on the
+      // drawing, and on a plan that fills the card that is a real trade.
+      helper:
+        "Draws the title inside the plan and the floor buttons in a row, instead of spending a header row on them",
+      selector: { boolean: {} },
+    },
+    {
+      name: "offlineStyle",
+      label: "Offline devices",
+      helper: "How a device is drawn when its entity is unavailable or missing",
+      selector: dropdown(
+        opt("dim", "Dimmed"),
+        opt("strike", "Dimmed and crossed out"),
+        opt("none", "No different")
+      ),
+    }
+  );
   return {
-    fields: [
-      {
-        name: "rotation",
-        label: "Rotate display",
-        helper: "Rotates the live card only — editing stays as drawn",
-        selector: dropdown(opt("0", "0°"), opt("90", "90°"), opt("180", "180°"), opt("270", "270°")),
-      },
-      {
-        name: "overlayScale",
-        label: "Badge & label size",
-        // Canvas units lead because they are what a plan wants and what a new
-        // plan is created with; fixed pixels are what an older plan is still
-        // laid out in, and the right answer for a card shown bigger than its
-        // canvas or a wall tablet that wants a px floor under its text.
-        helper: `Canvas units scale badges and labels with the drawing. Fixed pixels keep their size whatever width the card gets — suits a card rendered larger than its ${c.width}-wide canvas, or a wall tablet`,
-        selector: dropdown(opt("plan", "Canvas units"), opt("fixed", "Fixed pixels")),
-      },
-      {
-        name: "compactHeader",
-        label: "Compact header",
-        // Says what it costs as well as what it saves — the title lands on the
-        // drawing, and on a plan that fills the card that is a real trade.
-        helper:
-          "Draws the title inside the plan and the floor buttons in a row, instead of spending a header row on them",
-        selector: { boolean: {} },
-      },
-      {
-        name: "offlineStyle",
-        label: "Offline devices",
-        helper: "How a device is drawn when its entity is unavailable or missing",
-        selector: dropdown(
-          opt("dim", "Dimmed"),
-          opt("strike", "Dimmed and crossed out"),
-          opt("none", "No different")
-        ),
-      },
-    ],
+    fields,
     data: {
-      rotation: String(normalizePlanRotation(c.rotation)),
+      rotation: c.rotation === "auto" ? "auto" : String(normalizePlanRotation(c.rotation)),
+      rotationLandscape: c.rotationLandscape != null ? String(normalizePlanRotation(c.rotationLandscape)) : "",
+      rotationPortrait: c.rotationPortrait != null ? String(normalizePlanRotation(c.rotationPortrait)) : "",
       overlayScale: normalizeOverlayScale(c.overlayScale),
       compactHeader: c.compactHeader ?? false,
       offlineStyle: offlineStyleOf(c),
@@ -1492,8 +1532,17 @@ export function projectDisplayForm(c: FloorplanCardConfig): FormSpec {
     toPatch: (p) => {
       let out = p;
       if ("rotation" in out)
-        // Stored as a number; 0 means "not rotated", so keep it out of the YAML.
-        out = { ...out, rotation: out.rotation === "0" ? undefined : Number(out.rotation) };
+        // Stored as a number, "auto", or dropped entirely for the default
+        // (0 means "not rotated", so keep it out of the YAML).
+        out = {
+          ...out,
+          rotation: out.rotation === "0" ? undefined : out.rotation === "auto" ? "auto" : Number(out.rotation),
+        };
+      // "" means "Auto (match shape)" — the absence of a pin, not a pin of 0.
+      if ("rotationLandscape" in out)
+        out = { ...out, rotationLandscape: out.rotationLandscape === "" ? undefined : Number(out.rotationLandscape) };
+      if ("rotationPortrait" in out)
+        out = { ...out, rotationPortrait: out.rotationPortrait === "" ? undefined : Number(out.rotationPortrait) };
       // Both values are written down, which is the one field here that breaks
       // the "defaults stay out of the YAML" habit — deliberately. Omitting the
       // default is what let 1.5.0 restyle every existing plan by changing its

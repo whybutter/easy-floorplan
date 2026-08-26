@@ -1807,6 +1807,23 @@ describe("plan rotation (issue #33)", () => {
       expect(resolvePlanRotation("auto", 800, 800, true)).toBe(0);
       expect(resolvePlanRotation("auto", 800, 800, false)).toBe(90);
     });
+
+    it("a per-orientation pin overrides the match-shape heuristic for that orientation only", () => {
+      // Landscape viewport pinned to 270; a *landscape* pin has no say over a
+      // portrait viewport, which falls through to the heuristic instead (a
+      // landscape plan on a portrait viewport still turns, same as unpinned).
+      expect(resolvePlanRotation("auto", 1000, 600, true, 270)).toBe(270);
+      expect(resolvePlanRotation("auto", 1000, 600, false, 270)).toBe(90);
+    });
+
+    it("each orientation's pin only applies on its own orientation", () => {
+      expect(resolvePlanRotation("auto", 1000, 600, true, 180, 90)).toBe(180); // landscape -> landscape pin
+      expect(resolvePlanRotation("auto", 1000, 600, false, 180, 90)).toBe(90); // portrait -> portrait pin
+    });
+
+    it("an unset pin (null/undefined) falls back to the heuristic, not to 0", () => {
+      expect(resolvePlanRotation("auto", 600, 1000, true, undefined, 270)).toBe(90); // landscape: no pin, heuristic
+    });
   });
 
   it("maps corners of the plan onto corners of the rotated frame", () => {
