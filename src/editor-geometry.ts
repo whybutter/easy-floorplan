@@ -330,11 +330,18 @@ const PICK_ORDER: SelKind[] = [
   "area",
 ];
 
-/** Hit tolerances in virtual units. Wall matches the editor's fat hit stroke. */
+/**
+ * Hit tolerances in virtual units. Wall matches the editor's fat hit stroke.
+ * Bumped from the original 11 / 4 (Marco's fork, 2026-08-26): on a dense plan
+ * with rooms sharing exact wall corners, the old opening/wall bands were only
+ * a few screen pixels wide at normal zoom, which made grabbing a door or a
+ * wall next to a room corner unreliable — clicks kept landing in the much
+ * bigger Area polygon instead, even though Areas already pick last.
+ */
 export const HIT = {
-  wall: 11,
+  wall: 14,
   /** Padding around an item badge / text box so small glyphs stay grabbable. */
-  pad: 4,
+  pad: 7,
 } as const;
 
 /** Rotate (x, y) by −deg around (cx, cy) — i.e. into the element's local frame. */
