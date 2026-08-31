@@ -140,10 +140,15 @@ import {
   glowReach,
   wallsLightPassesThrough,
   openingClearFraction,
+  openingClearSpan,
+  glowClearSpan,
+  glowClearFraction,
   renderGlowMask,
   renderOpening,
   renderGlow,
   renderRipple,
+  checkHideCondition,
+  itemBadgeHidden,
 } from "./render";
 import type { FloorplanCardConfig, Opening, RenderHass } from "./types";
 import { symbolCatalog, symbolSize } from "./symbols";
@@ -243,6 +248,19 @@ describe("openingDefaultOpen", () => {
     expect(openingDefaultOpen({ type: "window" } as Opening)).toBe(false);
     expect(openingDefaultOpen({ type: "door", motion: "slide" } as Opening)).toBe(false);
     expect(openingDefaultOpen({ type: "window", motion: "slide" } as Opening)).toBe(false);
+  });
+
+  it("invert flips the unbound picture, same as it flips a bound reading", () => {
+    // A swing door normally draws open — inverted, and still unbound, it
+    // draws shut.
+    expect(openingDefaultOpen({ type: "door", invert: true } as Opening)).toBe(false);
+    // A window normally draws shut — inverted, and still unbound, it draws
+    // open, letting someone give an unbound window an "always open" look.
+    expect(openingDefaultOpen({ type: "window", invert: true } as Opening)).toBe(true);
+    // A slider/roll-up normally draws shut too, and inverts the same way.
+    expect(openingDefaultOpen({ type: "door", motion: "slide", invert: true } as Opening)).toBe(true);
+    // invert: false is the same as omitting it — no flip.
+    expect(openingDefaultOpen({ type: "door", invert: false } as Opening)).toBe(true);
   });
 });
 
@@ -459,6 +477,11 @@ describe("resolveOpeningOpen", () => {
     expect(resolveOpeningOpen(slider, undefined)).toBe(false);
   });
 
+  it("invert flips that fallback too, for an opening with no entity at all", () => {
+    expect(resolveOpeningOpen({ type: "door", invert: true } as Opening, undefined)).toBe(false);
+    expect(resolveOpeningOpen({ type: "window", invert: true } as Opening, undefined)).toBe(true);
+  });
+
   it("a slider bound to a cover resolves like a door", () => {
     expect(resolveOpeningOpen(slider, "open")).toBe(true);
     expect(resolveOpeningOpen(slider, "closed")).toBe(false);
@@ -489,6 +512,11 @@ describe("resolveOpeningAmount", () => {
   it("uses the type default when there is no entity/state", () => {
     expect(resolveOpeningAmount({ type: "door" } as Opening, undefined)).toBe(1);
     expect(resolveOpeningAmount({ type: "door", motion: "slide" } as Opening, undefined)).toBe(0);
+  });
+
+  it("invert flips that default too, for an opening with no entity at all", () => {
+    expect(resolveOpeningAmount({ type: "door", invert: true } as Opening, undefined)).toBe(0);
+    expect(resolveOpeningAmount({ type: "window", invert: true } as Opening, undefined)).toBe(1);
   });
 
   it("fails closed (0) on a sensor outage, ignoring any stale position", () => {
@@ -4575,6 +4603,136 @@ describe("openingClearFraction (#145 / #143)", () => {
   });
 });
 
+describe("glowClearFraction — glass admits a lamp's pool shut or open", () => {
+  it("passes an opaque opening straight through to openingClearFraction", () => {
+    expect(glowClearFraction({ type: "door" } as Opening, 0.25)).toBeCloseTo(0.25);
+    expect(glowClearFraction({ type: "door" } as Opening, 1)).toBe(1);
+    expect(glowClearFraction({ type: "door" } as Opening, 0)).toBe(0);
+  });
+
+  it("clears a window's whole gap whatever its sash is doing", () => {
+    expect(glowClearFraction({ type: "window" } as Opening, 0)).toBe(1);
+    expect(glowClearFraction({ type: "window" } as Opening, 0.3)).toBe(1);
+    expect(glowClearFraction({ type: "window" } as Opening, 1)).toBe(1);
+  });
+
+  it("reads `glazed` exactly as openingSunFraction does — one field, one fact", () => {
+    // A patio door marked glazed is a wall of glass to a lamp too, not just
+    // to the sun: shut, its own light still gets through.
+    expect(glowClearFraction({ type: "door", glazed: true } as Opening, 0)).toBe(1);
+    // An opaque window — glass-brick, a hatch — marked glazed: false stays
+    // opaque to a lamp same as it does to the sun: shut, it blocks.
+    expect(glowClearFraction({ type: "window", glazed: false } as Opening, 0)).toBe(0);
+    expect(glowClearFraction({ type: "window", glazed: false } as Opening, 0.4)).toBeCloseTo(0.4);
+  });
+
+  it("a roll-motion window is a blind standing in for the glass, not the glass itself", () => {
+    // device_class "shutter"/"blind"/etc. auto-maps to type: "window",
+    // motion: "roll" (openingFromDeviceClass) — reading `glazed`'s default
+    // here would make the blind always-clear no matter how far down it is.
+    const rollUp = { type: "window", motion: "roll" } as Opening;
+    expect(glowClearFraction(rollUp, 0)).toBe(0);
+    expect(glowClearFraction(rollUp, 0.6)).toBeCloseTo(0.6);
+    expect(glowClearFraction(rollUp, 1)).toBe(1);
+    // Categorical, regardless of `glazed` — motion is what says this is a
+    // covering rather than a sash, and an explicit glazed: true on top of it
+    // is the one case openingSunFraction itself doesn't need to consider,
+    // so there is no existing convention this borrows from either way.
+    expect(glowClearFraction({ ...rollUp, glazed: true }, 0)).toBe(0);
+  });
+
+  it("still respects a two-panel slider's travel for a non-glazed opening", () => {
+    const converging = {
+      id: "o", type: "door", motion: "slide", sliderStyle: "converging",
+      x: 300, y: 300, length: 200, angle: 0,
+    } as Opening;
+    expect(glowClearFraction(converging, 1, 1)).toBe(openingClearFraction(converging, 1, 1));
+  });
+
+  it("a shutter rolled down blocks the pool whatever the glass says (issue #185)", () => {
+    // A window's glass is not the whole story: the persiana in front of it can
+    // still be shut, and shut wins.
+    expect(glowClearFraction({ type: "window" } as Opening, 0, undefined, 0)).toBe(0);
+    expect(glowClearFraction({ type: "window" } as Opening, 1, undefined, 0)).toBe(0);
+    // Open, the window's own rule (always clear) still applies.
+    expect(glowClearFraction({ type: "window" } as Opening, 0, undefined, 1)).toBe(1);
+    // Only a fully-down shutter (0) blocks — a crack open is enough to defer
+    // back to the window, same threshold openingSunFraction uses.
+    expect(glowClearFraction({ type: "window" } as Opening, 0, undefined, 0.01)).toBe(1);
+  });
+
+  it("no shutter bound leaves an opening judged on itself alone", () => {
+    expect(glowClearFraction({ type: "window" } as Opening, 0, undefined, undefined)).toBe(1);
+    expect(glowClearFraction({ type: "door" } as Opening, 0.6, undefined, undefined)).toBeCloseTo(0.6);
+  });
+});
+
+describe("openingClearSpan — where the gap is, not just how wide (#219)", () => {
+  const dbl = (extra: Partial<Opening> = {}) =>
+    ({ id: "d", type: "door", sash: "double", x: 500, y: 100, length: 100, angle: 0, ...extra }) as Opening;
+  const width = ([a, b]: [number, number]) => b - a;
+
+  it("puts a double door's gap in the half whose leaf is open", () => {
+    // The report: a sensor per leaf, one leaf open, and the light came
+    // through the middle — half of it through the leaf that was still shut.
+    expect(openingClearSpan(dbl(), 1, 0)).toEqual([0, 0.5]);
+    expect(openingClearSpan(dbl(), 0, 1)).toEqual([0.5, 1]);
+    // Ajar, each leaf clears outward from the middle as it swings.
+    expect(openingClearSpan(dbl(), 0.5, 0)).toEqual([0.25, 0.5]);
+  });
+
+  it("leaves a double door with both leaves alike exactly where it was", () => {
+    // Which is why a single-sensor double door sees no change at all: the
+    // span it produces *is* the centred one.
+    for (const a of [0.25, 0.5, 1]) {
+      const [s0, s1] = openingClearSpan(dbl(), a, a);
+      expect(s0 + s1).toBeCloseTo(1, 10); // centred
+      expect(width([s0, s1])).toBeCloseTo(a, 10);
+    }
+    expect(openingClearSpan(dbl(), 0.6)).toEqual(openingClearSpan(dbl(), 0.6, 0.6));
+  });
+
+  it("mirrors with flipH, because the leaves swap jambs with it", () => {
+    expect(openingClearSpan(dbl({ flipH: true }), 1, 0)).toEqual([0.5, 1]);
+    expect(openingClearSpan(dbl({ flipH: true }), 0, 1)).toEqual([0, 0.5]);
+  });
+
+  it("never disagrees with openingClearFraction about the amount", () => {
+    // The two answer different halves of one question, so a span that was
+    // wider or narrower than the fraction would leak light or lose it.
+    const cases: Array<[Opening, number, number | undefined]> = [
+      [dbl(), 1, 0],
+      [dbl(), 0.3, 0.9],
+      [dbl({ flipH: true }), 0.2, 1],
+      [{ id: "s", type: "door", x: 0, y: 0, length: 90, angle: 0 } as Opening, 0.4, undefined],
+      [{ id: "w", type: "window", x: 0, y: 0, length: 90, angle: 0 } as Opening, 0.7, undefined],
+      [
+        { id: "c", type: "door", motion: "slide", sliderStyle: "converging",
+          x: 0, y: 0, length: 200, angle: 0 } as Opening,
+        1, 1,
+      ],
+    ];
+    for (const [o, a1, a2] of cases) {
+      expect(width(openingClearSpan(o, a1, a2))).toBeCloseTo(openingClearFraction(o, a1, a2), 10);
+    }
+  });
+
+  it("centres everything that is not a double door, as it always did", () => {
+    const slider = { id: "s", type: "door", motion: "slide", x: 0, y: 0, length: 100, angle: 0 } as Opening;
+    expect(openingClearSpan(slider, 0.5)).toEqual([0.25, 0.75]);
+    const roll = { id: "r", type: "window", motion: "roll", x: 0, y: 0, length: 100, angle: 0 } as Opening;
+    expect(openingClearSpan(roll, 0.4)).toEqual([0.3, 0.7]);
+  });
+
+  it("glowClearSpan keeps glass and a shut shutter as whole-opening answers", () => {
+    const glass = dbl({ glazed: true });
+    expect(glowClearSpan(glass, 1, 0)).toEqual([0, 1]); // all of it, leaves irrelevant
+    expect(glowClearSpan(dbl(), 1, 0, 0)).toEqual([0, 0]); // shutter down: none of it
+    // …and defers to the placed span otherwise.
+    expect(glowClearSpan(dbl(), 1, 0)).toEqual([0, 0.5]);
+  });
+});
+
 describe("wallsLightPassesThrough (#143)", () => {
   const wall = (x1: number, y1: number, x2: number, y2: number, id = "w") => ({ id, x1, y1, x2, y2 });
   // A door centred on a horizontal wall at y=100, spanning x 480..520.
@@ -4612,6 +4770,41 @@ describe("wallsLightPassesThrough (#143)", () => {
       return 1;
     });
     expect(asked).toBe(openings.length);
+  });
+
+  it("cuts the gap where the span says, not always in the middle (#219)", () => {
+    // The end-to-end shape of the fix: a 40-wide double door centred at 500 on
+    // a horizontal wall, first leaf open. The clear half is 480..500, and that
+    // is where the wall must be cut — centring it left 490..510, so a lamp
+    // next door lit half of the leaf that was still shut.
+    const walls = [wall(0, 100, 1000, 100)];
+    const dbl = door({ sash: "double" } as Partial<Opening>);
+    expect(spans(wallsLightPassesThrough(walls, [dbl], () => 0.5))).toEqual([
+      [0, 490],
+      [510, 1000],
+    ]);
+    expect(spans(wallsLightPassesThrough(walls, [dbl], (o) => openingClearSpan(o, 1, 0)))).toEqual([
+      [0, 480],
+      [500, 1000],
+    ]);
+    expect(spans(wallsLightPassesThrough(walls, [dbl], (o) => openingClearSpan(o, 0, 1)))).toEqual([
+      [0, 500],
+      [520, 1000],
+    ]);
+  });
+
+  it("places the span against the wall's own direction, not the canvas's", () => {
+    // A wall drawn right-to-left runs backwards under the same opening, so a
+    // span read straight off would land mirrored — and only ever show up on a
+    // door with unequal leaves, which is the one case this is for.
+    const forward = [wall(0, 100, 1000, 100)];
+    const backward = [wall(1000, 100, 0, 100, "wb")];
+    const dbl = door({ sash: "double" } as Partial<Opening>);
+    const cut = (walls: ReturnType<typeof wall>[]) =>
+      spans(wallsLightPassesThrough(walls, [dbl], (o) => openingClearSpan(o, 1, 0)))
+        .map(([a, b]) => [Math.min(a, b), Math.max(a, b)])
+        .sort((p, q) => p[0]! - q[0]!);
+    expect(cut(forward)).toEqual(cut(backward));
   });
 
   it("hands back the very same array when nothing is open", () => {
@@ -4752,6 +4945,22 @@ describe("wallsLightPassesThrough (#143)", () => {
     };
     expect(beyond(0)).toBe(false); // shut: the room beyond stays dark
     expect(beyond(1)).toBe(true); // open: light reaches through
+  });
+
+  it("a shut window still cuts a gap when fed glowClearFraction, unlike a shut door", () => {
+    const walls = [wall(0, 100, 1000, 100)];
+    const win = door({ id: "w", type: "window" } as Partial<Opening>);
+    // Fed the plain amount (0, shut): today's door behaviour — wall stays whole.
+    expect(wallsLightPassesThrough(walls, [win], () => 0)).toEqual(walls);
+    // Fed through glowClearFraction: glass admits the pool regardless of sash.
+    const out = wallsLightPassesThrough(walls, [win], (o) => glowClearFraction(o, 0));
+    expect(spans(out)).toEqual([
+      [0, 480],
+      [520, 1000],
+    ]);
+    // A shut door, run through the same helper, still blocks — only glass is exempt.
+    const doorOut = wallsLightPassesThrough(walls, [door()], (o) => glowClearFraction(o, 0));
+    expect(doorOut).toEqual(walls);
   });
 });
 
@@ -5367,5 +5576,226 @@ describe("stairs that change floor (issue #121)", () => {
     expect(furnitureFloorTarget(stairs("up"), two, "g")).toBe("up");
     expect(furnitureFloorTarget(stairs("down"), two, "up")).toBe("g");
     expect(furnitureFloorTarget(stairs("down"), two, "g")).toBeUndefined();
+  });
+});
+describe("hide by condition (checkHideCondition)", () => {
+  // Signature: (evalState, mode, stateMatch, operator, threshold, invert)
+
+  describe("threshold mode", () => {
+    it("hides when the comparison holds", () => {
+      expect(checkHideCondition("25", "threshold", undefined, ">", 20, false)).toBe(true);
+    });
+
+    it("leaves the item alone when it does not", () => {
+      expect(checkHideCondition("15", "threshold", undefined, ">", 20, false)).toBe(false);
+    });
+
+    it("honours every operator the editor offers", () => {
+      const at = (op: string) => checkHideCondition("20", "threshold", undefined, op, 20, false);
+      expect([at("<"), at("<="), at("=="), at("!="), at(">="), at(">")])
+        .toEqual([false, true, true, false, true, false]);
+    });
+
+    it("inverts the result when asked", () => {
+      expect(checkHideCondition("25", "threshold", undefined, ">", 20, true)).toBe(false);
+    });
+
+    // Fail-to-nothing guards. Each of these used to hide, or fall through to
+    // state matching against an unrelated value.
+    it("does nothing when no threshold is configured", () => {
+      expect(checkHideCondition("25", "threshold", undefined, ">", undefined, false)).toBe(false);
+    });
+
+    it("does not invert a missing threshold into a hide", () => {
+      expect(checkHideCondition("25", "threshold", undefined, ">", undefined, true)).toBe(false);
+    });
+
+    it("does nothing for a non-numeric state", () => {
+      expect(checkHideCondition("heating", "threshold", undefined, ">", 20, false)).toBe(false);
+      expect(checkHideCondition("unavailable", "threshold", undefined, "<", 31, false)).toBe(false);
+    });
+
+    it("does not guess at an operator it was never given", () => {
+      // An editor that grows a new operator must teach this switch about it
+      // rather than silently hiding devices as though it meant ">".
+      expect(checkHideCondition("25", "threshold", undefined, "≥", 20, false)).toBe(false);
+    });
+  });
+
+  describe("state mode", () => {
+    it("matches case-insensitively", () => {
+      expect(checkHideCondition("Playing", "state", "playing", "==", undefined, false)).toBe(true);
+    });
+
+    it("matches the same way matchStateRule does, whitespace and all", () => {
+      // A hide rule and a colour rule must agree about " on " (render.ts:302).
+      expect(checkHideCondition(" on ", "state", "on", "==", undefined, false)).toBe(true);
+      expect(checkHideCondition("on", "state", " ON ", "==", undefined, false)).toBe(true);
+    });
+
+    it("supports !=", () => {
+      expect(checkHideCondition("idle", "state", "heating", "!=", undefined, false)).toBe(true);
+      expect(checkHideCondition("heating", "state", "heating", "!=", undefined, false)).toBe(false);
+    });
+
+    it("does nothing when no match string is configured", () => {
+      // The editor seeds these fields with "". Without this guard, picking
+      // "!=" before typing a match hides the device, because every state
+      // differs from the empty string.
+      expect(checkHideCondition("on", "state", "", "!=", undefined, false)).toBe(false);
+      expect(checkHideCondition("on", "state", undefined, "!=", undefined, false)).toBe(false);
+      expect(checkHideCondition("on", "state", "   ", "==", undefined, false)).toBe(false);
+    });
+
+    it("does not invert a missing match into a hide", () => {
+      expect(checkHideCondition("on", "state", "", "!=", undefined, true)).toBe(false);
+    });
+  });
+
+  describe("a sensor that does not answer", () => {
+    it("hides when the outage is what was asked for", () => {
+      // "Hide the badge while this sensor is dead" is a real rule, and the
+      // one the feature's own screenshots demonstrate.
+      expect(checkHideCondition("unavailable", "state", "unavailable", "==", undefined, false)).toBe(true);
+      expect(checkHideCondition("unknown", "state", "unknown", "==", undefined, false)).toBe(true);
+    });
+
+    it("leaves the item on the plan when the outage was not asked for", () => {
+      // "Hide unless the sensor says heating" must not become "hide" the day
+      // that sensor is renamed — the device would vanish with nothing on
+      // screen to explain it.
+      expect(checkHideCondition("unavailable", "state", "heating", "==", undefined, false)).toBe(false);
+      expect(checkHideCondition("unknown", "state", "heating", "!=", undefined, false)).toBe(false);
+    });
+
+    it("does not let invert turn an outage into a hide", () => {
+      expect(checkHideCondition("unavailable", "state", "heating", "==", undefined, true)).toBe(false);
+      expect(checkHideCondition("unavailable", "threshold", undefined, "<", 31, true)).toBe(false);
+    });
+
+    it("treats a missing or empty value as no answer at all", () => {
+      expect(checkHideCondition(undefined, "state", "on", "==", undefined, false)).toBe(false);
+      expect(checkHideCondition(undefined, "state", "on", "==", undefined, true)).toBe(false);
+      expect(checkHideCondition("", "state", "on", "==", undefined, false)).toBe(false);
+    });
+  });
+});
+
+describe("hide by condition, through the card's own entry points", () => {
+  const OUTSIDE = "sensor.outside_temperature";
+  const RADIATOR = "climate.radiator";
+
+  const hass = (states: Record<string, { state: string; attributes?: object }>) =>
+    ({
+      states: Object.fromEntries(
+        Object.entries(states).map(([id, v]) => [
+          id,
+          { entity_id: id, state: v.state, attributes: v.attributes ?? {} },
+        ]),
+      ),
+      formatEntityState: (s: { state: string }) => s.state,
+    }) as unknown as RenderHass;
+
+  it("hides the whole device on a threshold against another entity", () => {
+    const h = hass({ [OUTSIDE]: { state: "25" }, [RADIATOR]: { state: "idle" } });
+    const item = {
+      entity: RADIATOR,
+      enableHideByEntity: true,
+      hideEntity: OUTSIDE,
+      hideMode: "threshold",
+      hideOperator: "<=",
+      hideThreshold: 31,
+    } as const;
+    expect(itemHiddenWhenInactive(item, "idle", h)).toBe(true);
+    expect(itemHiddenWhenInactive({ ...item, hideThreshold: 10 }, "idle", h)).toBe(false);
+  });
+
+  it("reads hideAttribute rather than the state when one is named", () => {
+    const h = hass({ [OUTSIDE]: { state: "25", attributes: { humidity: 80 } } });
+    expect(
+      itemHiddenWhenInactive(
+        {
+          entity: OUTSIDE,
+          enableHideByEntity: true,
+          hideAttribute: "humidity",
+          hideMode: "threshold",
+          hideOperator: ">=",
+          hideThreshold: 50,
+        },
+        "25",
+        h,
+      ),
+    ).toBe(true);
+  });
+
+  it("hides the badge without touching the device", () => {
+    const h = hass({ [OUTSIDE]: { state: "25" }, [RADIATOR]: { state: "idle" } });
+    const item = {
+      entity: RADIATOR,
+      enableHideBadgeByEntity: true,
+      hideBadgeEntity: OUTSIDE,
+      hideBadgeMode: "threshold",
+      hideBadgeOperator: "<=",
+      hideBadgeThreshold: 31,
+    } as const;
+    expect(itemBadgeHidden(item, "idle", h)).toBe(true);
+    // The gate is what turns it on: same config, flag off, badge stays.
+    expect(itemBadgeHidden({ ...item, enableHideBadgeByEntity: false }, "idle", h)).toBe(false);
+    // …and it says nothing about the device itself.
+    expect(itemHiddenWhenInactive(item, "idle", h)).toBe(false);
+  });
+
+  it("hides the badge of a sensor that has gone unavailable", () => {
+    const h = hass({ [OUTSIDE]: { state: "unavailable" } });
+    expect(
+      itemBadgeHidden(
+        {
+          entity: OUTSIDE,
+          enableHideBadgeByEntity: true,
+          hideBadgeMode: "state",
+          hideBadgeMatch: "unavailable",
+          hideBadgeOperator: "==",
+        },
+        "unavailable",
+        h,
+      ),
+    ).toBe(true);
+  });
+
+  it("drops the state text while keeping the name", () => {
+    const h = hass({ [RADIATOR]: { state: "idle" } });
+    const item = {
+      entity: RADIATOR,
+      name: "Radiator",
+      showName: true,
+      showState: true,
+      enableHideStateByEntity: true,
+      hideStateMode: "state",
+      hideStateMatch: "idle",
+      hideStateOperator: "==",
+    } as const;
+    expect(itemBadgeLabel(h, item)).toBe("Radiator");
+    expect(itemBadgeLabel(h, { ...item, hideStateMatch: "heating" })).toBe("Radiator · idle");
+  });
+
+  it("leaves the legacy hideWhenInactive path alone", () => {
+    const h = hass({ "light.kitchen": { state: "on" } });
+    expect(itemHiddenWhenInactive({ entity: "light.kitchen", hideWhenInactive: true }, "on", h)).toBe(false);
+    expect(itemHiddenWhenInactive({ entity: "light.kitchen", hideWhenInactive: true }, "off", h)).toBe(true);
+  });
+
+  it("watches every entity a hide rule names (issue #82)", () => {
+    const ids = collectWatchedEntities({
+      items: [
+        {
+          id: "a",
+          entity: RADIATOR,
+          hideEntity: OUTSIDE,
+          hideStateEntity: "sensor.a",
+          hideBadgeEntity: "sensor.b",
+        },
+      ],
+    } as unknown as FloorplanCardConfig);
+    for (const id of [RADIATOR, OUTSIDE, "sensor.a", "sensor.b"]) expect(ids.has(id)).toBe(true);
   });
 });
