@@ -438,20 +438,28 @@ export interface FloorItem {
   y: number;
   /**
    * Position this device by room instead of a fixed point (presence
-   * tracking, e.g. Bermuda BLE trilateration's per-device `_area` sensor).
-   * When set, the live card reads this entity's state, matches it
+   * tracking, e.g. Bermuda BLE trilateration). When set, the live card reads
+   * this entity's state (or `roomAttribute`, see below), matches it
    * case-insensitively against each Area's `name` on the current floor, and
    * draws the device at that Area's centroid instead of `x`/`y` — so the icon
-   * follows a person or tagged item from room to room as the entity's state
-   * changes. `x`/`y` still matter: they're where the editor shows and drags
-   * the device (there's no live entity state to resolve against there), and
-   * they're the position on the card whenever the state doesn't match any
-   * Area on the floor being shown (unknown/unavailable, "not_home", or a
-   * room that belongs to a different floor) — the device then hides rather
-   * than show a position nothing currently backs up (same
-   * don't-show-what-you-don't-trust rule presence gates already follow).
+   * follows a person or tagged item from room to room as the entity changes.
+   * `x`/`y` still matter: they're where the editor shows and drags the
+   * device (there's no live entity state to resolve against there), and
+   * they're the position on the card whenever nothing matches any Area on
+   * the floor being shown (unknown/unavailable, "not_home", or a room that
+   * belongs to a different floor) — the device then hides rather than show a
+   * position nothing currently backs up (same don't-show-what-you-don't-
+   * trust rule presence gates already follow).
    */
   roomEntity?: string;
+  /**
+   * Read this attribute of `roomEntity` instead of its state for the room
+   * match. Bermuda's own `device_tracker.*` entities are the common case:
+   * the entity's *state* is just `home`/`not_home`, and the room name lives
+   * in its `area` attribute (`null` while away) — set `roomAttribute: area`
+   * for those. Ignored without `roomEntity`.
+   */
+  roomAttribute?: string;
   kind: ItemKind;
   /** Optional override icon (mdi:...). Falls back to the entity's icon. */
   icon?: string;
