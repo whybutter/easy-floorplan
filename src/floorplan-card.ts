@@ -647,12 +647,17 @@ export class FloorplanCard extends LitElement {
     areas?: readonly Area[]
   ): TemplateResult | typeof nothing {
     // Room-tracked device (`roomEntity`, e.g. Bermuda presence): resolve the
-    // Area its state currently names, and draw at that Area's centroid
-    // instead of the configured x/y. No match — hides. See the field's own
-    // doc comment (types.ts) for why hide rather than fall back to x/y.
+    // Area its state (or roomAttribute — Bermuda's own device_tracker
+    // entities carry the room name in an `area` attribute, not the state)
+    // currently names, and draw at that Area's centroid instead of the
+    // configured x/y. No match — hides. See the field's own doc comment
+    // (types.ts) for why hide rather than fall back to x/y.
     let itemPos: { x: number; y: number } = item;
     if (item.roomEntity) {
-      const area = areaByRoomState(areas, this.hass?.states[item.roomEntity]?.state);
+      const roomState = item.roomAttribute
+        ? this.hass?.states[item.roomEntity]?.attributes?.[item.roomAttribute]
+        : this.hass?.states[item.roomEntity]?.state;
+      const area = areaByRoomState(areas, typeof roomState === "string" ? roomState : undefined);
       if (!area) return nothing;
       itemPos = polygonCentroid(area.points);
     }
