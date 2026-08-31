@@ -124,6 +124,7 @@ import {
   rotatePlanPoint,
   planRotationTransform,
   polygonCentroid,
+  areaByRoomState,
   areaZoomTransform,
   IDENTITY_ZOOM,
   applyManualZoom,
@@ -3583,6 +3584,42 @@ describe("polygonCentroid", () => {
 
   it("returns the origin for an empty polygon", () => {
     expect(polygonCentroid([])).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe("areaByRoomState (room-tracked devices, e.g. Bermuda presence)", () => {
+  const office = { id: "a1", name: "Office", points: [{ x: 0, y: 0 }] } as Area;
+  const kitchen = { id: "a2", name: "Kitchen", points: [{ x: 10, y: 10 }] } as Area;
+  const areas = [office, kitchen];
+
+  it("matches an Area by exact name", () => {
+    expect(areaByRoomState(areas, "Kitchen")).toBe(kitchen);
+  });
+
+  it("matches case-insensitively and trims whitespace", () => {
+    expect(areaByRoomState(areas, "  office  ")).toBe(office);
+    expect(areaByRoomState(areas, "OFFICE")).toBe(office);
+  });
+
+  it("returns undefined for a state that names no Area on this floor", () => {
+    expect(areaByRoomState(areas, "Garage")).toBeUndefined();
+    expect(areaByRoomState(areas, "not_home")).toBeUndefined();
+  });
+
+  it("returns undefined for an empty, unset, or whitespace-only state", () => {
+    expect(areaByRoomState(areas, undefined)).toBeUndefined();
+    expect(areaByRoomState(areas, "")).toBeUndefined();
+    expect(areaByRoomState(areas, "   ")).toBeUndefined();
+  });
+
+  it("returns undefined when there are no areas to match against", () => {
+    expect(areaByRoomState(undefined, "Office")).toBeUndefined();
+    expect(areaByRoomState([], "Office")).toBeUndefined();
+  });
+
+  it("skips an area with no name rather than matching it against an empty state", () => {
+    const unnamed = { id: "a3", points: [{ x: 5, y: 5 }] } as Area;
+    expect(areaByRoomState([unnamed], "")).toBeUndefined();
   });
 });
 

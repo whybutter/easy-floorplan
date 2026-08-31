@@ -436,6 +436,22 @@ export interface FloorItem {
   stateColor?: StateColorRule[];
   x: number;
   y: number;
+  /**
+   * Position this device by room instead of a fixed point (presence
+   * tracking, e.g. Bermuda BLE trilateration's per-device `_area` sensor).
+   * When set, the live card reads this entity's state, matches it
+   * case-insensitively against each Area's `name` on the current floor, and
+   * draws the device at that Area's centroid instead of `x`/`y` — so the icon
+   * follows a person or tagged item from room to room as the entity's state
+   * changes. `x`/`y` still matter: they're where the editor shows and drags
+   * the device (there's no live entity state to resolve against there), and
+   * they're the position on the card whenever the state doesn't match any
+   * Area on the floor being shown (unknown/unavailable, "not_home", or a
+   * room that belongs to a different floor) — the device then hides rather
+   * than show a position nothing currently backs up (same
+   * don't-show-what-you-don't-trust rule presence gates already follow).
+   */
+  roomEntity?: string;
   kind: ItemKind;
   /** Optional override icon (mdi:...). Falls back to the entity's icon. */
   icon?: string;
