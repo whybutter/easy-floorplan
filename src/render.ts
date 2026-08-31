@@ -4207,6 +4207,28 @@ export function polygonCentroid(points: readonly AreaPoint[]): { x: number; y: n
   return { x: sum.x / points.length, y: sum.y / points.length };
 }
 
+/**
+ * The Area on this floor whose `name` matches a room-presence entity's state
+ * (e.g. Bermuda BLE trilateration's per-device `sensor.*_area`, which reads
+ * back the HA Area's own display name) — case-insensitively, since "Office"
+ * from the sensor and "office" typed into the plan should still agree.
+ *
+ * `undefined` for a state that doesn't name any Area on this floor: unset,
+ * `unknown`/`unavailable`, "not_home", or an area that belongs to a
+ * *different* floor of the same plan. The caller (`FloorItem.roomEntity`)
+ * treats that as "hide the device" rather than falling back to a stale
+ * position — see the field's own doc comment for why.
+ */
+export function areaByRoomState(
+  areas: readonly Area[] | undefined,
+  state: string | undefined
+): Area | undefined {
+  if (!state) return undefined;
+  const needle = state.trim().toLowerCase();
+  if (!needle) return undefined;
+  return areas?.find((a) => a.name?.trim().toLowerCase() === needle);
+}
+
 /** Neutral (unzoomed) result of {@link areaZoomTransform} — identity view. */
 export const IDENTITY_ZOOM: AreaZoomTransform = { scale: 1, txPercent: 0, tyPercent: 0 };
 

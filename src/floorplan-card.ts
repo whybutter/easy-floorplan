@@ -77,6 +77,7 @@ import {
   openingClearFraction,
   glowClearSpan,
   polygonCentroid,
+  areaByRoomState,
   trackerSensorReading,
   entityIsActive,
   itemBadgeLabel,
@@ -642,8 +643,19 @@ export class FloorplanCard extends LitElement {
     item: FloorItem,
     c: FloorplanCardConfig,
     rot: PlanRotation,
-    scale: OverlayScale
-  ): TemplateResult {
+    scale: OverlayScale,
+    areas?: readonly Area[]
+  ): TemplateResult | typeof nothing {
+    // Room-tracked device (`roomEntity`, e.g. Bermuda presence): resolve the
+    // Area its state currently names, and draw at that Area's centroid
+    // instead of the configured x/y. No match — hides. See the field's own
+    // doc comment (types.ts) for why hide rather than fall back to x/y.
+    let itemPos: { x: number; y: number } = item;
+    if (item.roomEntity) {
+      const area = areaByRoomState(areas, this.hass?.states[item.roomEntity]?.state);
+      if (!area) return nothing;
+      itemPos = polygonCentroid(area.points);
+    }
     const on = this._isOn(item);
     // Name/state composition lives in itemBadgeLabel, including #39's
     // no-entity guard (an unbound device gets no state line).
@@ -709,7 +721,7 @@ export class FloorplanCard extends LitElement {
 
     // Rotated frame: the overlay is HTML, so each anchor is remapped instead
     // of transformed — badges and labels stay upright at any rotation.
-    const p = rotatePlanPoint(item.x, item.y, c.width, c.height, rot);
+    const p = rotatePlanPoint(itemPos.x, itemPos.y, c.width, c.height, rot);
     const d = rotatedCanvasSize(c.width, c.height, rot);
     // Only a device that answers is a button (issue #134) — the press effect,
     // the pointer cursor, the `button` role, the tab stop and the gesture
@@ -1292,7 +1304,7 @@ export class FloorplanCard extends LitElement {
                   )
               ),
               (it, i) => it.id || i,
-              (it) => this._renderItem(it, c, rot, scale)
+              (it) => this._renderItem(it, c, rot, scale, active.areas)
             )}
           </div>
           </div>
