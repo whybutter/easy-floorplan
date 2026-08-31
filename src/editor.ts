@@ -743,6 +743,31 @@ export class FloorplanCardEditor extends LitElement {
     return s > 0 ? Math.round(v / s) * s : v;
   }
 
+  /**
+   * A spawn point near `(x, y)` that doesn't land exactly on an existing
+   * point (Marco's fork). `+ Add` always centers a new item/furniture/text
+   * piece on the canvas — fine for the first one, but a device meant to be
+   * repositioned live rather than dragged into place (`roomEntity`) is
+   * often added several times in a row with nobody moving the previous one,
+   * and every one landed on the exact same pixel: unselectable individually,
+   * indistinguishable from one another. Steps diagonally by the resolved
+   * snap (or the grid, snap off) until the point is clear, capped so a
+   * canvas already packed edge-to-edge still returns *something* rather
+   * than loop.
+   */
+  private _findFreeSpot(x: number, y: number, occupied: readonly { x: number; y: number }[]): { x: number; y: number } {
+    const off = this._resolvedSnap || this.grid || 1;
+    const collides = (px: number, py: number) =>
+      occupied.some((p) => Math.abs(p.x - px) < 1 && Math.abs(p.y - py) < 1);
+    let px = x;
+    let py = y;
+    for (let n = 1; collides(px, py) && n <= 20; n++) {
+      px = this._snap(x + off * n);
+      py = this._snap(y + off * n);
+    }
+    return { x: px, y: py };
+  }
+
   private _toVirtual(ev: PointerEvent, snap = true): { x: number; y: number } {
     const svgEl = this._svg!;
     const ctm = svgEl.getScreenCTM();
@@ -1590,11 +1615,16 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   private _addItem(kind: ItemKind): void {
+    const spot = this._findFreeSpot(
+      this._snap(this._config.width / 2),
+      this._snap(this._config.height / 2),
+      this._floor().items
+    );
     const it: FloorItem = {
       id: uid("item"),
       entity: "",
-      x: this._snap(this._config.width / 2),
-      y: this._snap(this._config.height / 2),
+      x: spot.x,
+      y: spot.y,
       kind,
       showState: kind === "sensor",
       showIcon: true,
@@ -1607,11 +1637,16 @@ export class FloorplanCardEditor extends LitElement {
 
   private _addFurniture(type: string): void {
     const size = symbolSize(type, this._symbols());
+    const spot = this._findFreeSpot(
+      this._snap(this._config.width / 2),
+      this._snap(this._config.height / 2),
+      this._floor().furniture
+    );
     const f: Furniture = {
       id: uid("furn"),
       type,
-      x: this._snap(this._config.width / 2),
-      y: this._snap(this._config.height / 2),
+      x: spot.x,
+      y: spot.y,
       w: size.w,
       h: size.h,
       angle: 0,
@@ -1654,10 +1689,15 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   private _addText(): void {
+    const spot = this._findFreeSpot(
+      this._snap(this._config.width / 2),
+      this._snap(this._config.height / 2),
+      this._floor().texts
+    );
     const t: FloorText = {
       id: uid("text"),
-      x: this._snap(this._config.width / 2),
-      y: this._snap(this._config.height / 2),
+      x: spot.x,
+      y: spot.y,
       text: "Label",
       size: DEFAULT_TEXT_SIZE,
     };
