@@ -162,6 +162,7 @@ import {
   itemBadgeForm,
   itemEffectsForm,
   itemBehaviourForm,
+  itemRoomForm,
   itemHasRipple,
   normalizeFormPatch,
   openingForm,
@@ -4736,6 +4737,10 @@ export class FloorplanCardEditor extends LitElement {
           : nothing}
         ${this._renderGroup("Behaviour", this._renderForm(itemBehaviourForm(it), apply))}
         ${this._renderGroup("Visibility", this._renderForm(itemGroup7aForm(it), apply))}
+        ${this._renderGroup(
+          "Room tracking",
+          this._renderForm(itemRoomForm(it), apply)
+        )}
       `;
     }
 

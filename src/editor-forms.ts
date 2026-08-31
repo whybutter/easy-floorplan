@@ -794,6 +794,39 @@ export function itemEntityForm(it: FloorItem, areaScope?: AreaEntityScope): Form
   };
 }
 
+/**
+ * Room tracking: position this device by matching a presence entity's state
+ * (or one of its attributes) against each Area's name, instead of a fixed
+ * point — a person or tagged item's icon then follows them from room to
+ * room (e.g. Bermuda BLE trilateration's device_tracker entities, whose
+ * room lives in an `area` attribute rather than the state itself).
+ *
+ * A separate entity from the one the badge reads (`itemEntityForm`'s
+ * `entity`) on purpose — the device you want to *see* on the plan (a
+ * battery sensor, a light) is often not the entity that reports where it
+ * is, and the two would otherwise fight over one field.
+ */
+export function itemRoomForm(it: FloorItem): FormSpec {
+  return {
+    fields: [
+      {
+        name: "roomEntity",
+        label: "Track by room",
+        helper: "Position this device by matching this entity's state to an Area's name, instead of a fixed point",
+        selector: { entity: {} },
+      },
+      {
+        name: "roomAttribute",
+        label: "Room attribute",
+        helper: "Read this attribute instead of the state (e.g. Bermuda's device_tracker entities use \"area\")",
+        selector: { attribute: { entity_id: it.roomEntity } },
+      },
+    ],
+    data: { roomEntity: it.roomEntity ?? "", roomAttribute: it.roomAttribute ?? "" },
+    toPatch: identity,
+  };
+}
+
 // ---- the device panel, in groups (issue #180 follow-up) --------------------
 //
 // A section header rather than a doc comment: it describes the seven functions
